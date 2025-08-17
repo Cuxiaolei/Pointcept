@@ -3,7 +3,7 @@ _base_ = [
     "../_base_/dataset/s3dis.py"  # 继承基础数据集配置
 ]
 # misc custom setting
-batch_size = 2  # 根据你的GPU显存调整（原12，若单卡显存不足可减小）
+batch_size = 1  # 根据你的GPU显存调整（原12，若单卡显存不足可减小）
 num_worker = 8  # 原24，根据CPU核心数调整（建议设为GPU数*4）
 mix_prob = 0.8  # 混合精度训练的概率（保留，无需修改）
 empty_cache = False  # 训练中是否清空CUDA缓存（保留默认）

@@ -5,7 +5,7 @@ from .builder import DATASETS
 from .defaults import DefaultDataset  # 继承基础数据集类
 
 @DATASETS.register_module()
-class CustomS3DISDataset(DefaultDataset):  # 自定义类名，避免与原有冲突
+class S3DISDataset(DefaultDataset):  # 自定义类名，避免与原有冲突
     def __init__(self, split, data_root, **kwargs):
         super().__init__(split=split, data_root=data_root,** kwargs)
         # 读取场景列表文件（train_scenes.txt/val_scenes.txt/test_scenes.txt）

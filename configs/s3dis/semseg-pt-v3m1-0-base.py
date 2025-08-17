@@ -13,7 +13,7 @@ enable_amp = True  # 启用自动混合精度训练（保留，加速训练）
 model = dict(
     type="DefaultSegmentorV2",
     num_classes=3,  # 关键：从13改为3（三标签分类）
-    backbone_out_channels=6,  # 保留默认（backbone输出通道）
+    backbone_out_channels=64,  # 保留默认（backbone输出通道）
     backbone=dict(
         type="PT-v3m1",
         in_channels=6,  # 关键：若你的特征是6维（含坐标外的6个特征），保留6；若为3维则改为3
@@ -112,7 +112,7 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment"),  # 保留坐标、网格坐标、标签
-                feat_keys=("color",),  # 仅保留颜色特征（你的特征只有颜色）
+                feat_keys=("coord", "color"),  # 仅保留颜色特征（你的特征只有颜色）
             ),
         ],
         test_mode=False,
@@ -138,7 +138,7 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment", "origin_segment", "inverse"),
-                feat_keys=("color",),  # 仅颜色特征
+                feat_keys=("coord", "color"),  # 仅颜色特征
             ),
         ],
         test_mode=False,
@@ -167,7 +167,7 @@ data = dict(
                 dict(
                     type="Collect",
                     keys=("coord", "grid_coord", "index"),
-                    feat_keys=("color", "normal"),
+                    feat_keys=("coord", "color"),
                 ),
             ],
             aug_transform=[

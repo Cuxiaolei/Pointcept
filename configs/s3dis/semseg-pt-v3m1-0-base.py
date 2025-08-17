@@ -16,7 +16,7 @@ model = dict(
     backbone_out_channels=64,  # 保留默认（backbone输出通道）
     backbone=dict(
         type="PT-v3m1",
-        in_channels=6,  # 关键：若你的特征是6维（含坐标外的6个特征），保留6；若为3维则改为3
+        in_channels=3,  # 关键：若你的特征是6维（含坐标外的6个特征），保留6；若为3维则改为3
         # 以下backbone参数均保留默认（PT-v3m1的基础结构）
         order=("z", "z-trans", "hilbert", "hilbert-trans"),
         stride=(2, 2, 2, 2),

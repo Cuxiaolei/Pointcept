@@ -89,37 +89,54 @@ class DefaultDataset(Dataset):
                         os.path.join(self.data_root, data) for data in json.load(f)
                     ]
             else:
-                # 新逻辑：直接收集 split 目录下的所有 .npy 文件
-                data_list += glob.glob(os.path.join(self.data_root, split, "*.npy"))
+                data_list += glob.glob(os.path.join(self.data_root, split, "*"))
         return data_list
 
     def get_data(self, idx):
-        data_path = self.data_list[idx % len(self.data_list)]  # 现在指向 .npy 文件
+        data_path = self.data_list[idx % len(self.data_list)]
         name = self.get_data_name(idx)
         split = self.get_split_name(idx)
         if self.cache:
             cache_name = f"pointcept-{name}"
             return shared_dict(cache_name)
 
-        # 加载单个 .npy 文件（假设格式为 [x, y, z, r, g, b, label]）
-        data = np.load(data_path).astype(np.float32)
-
-        # 解析数据（根据你的实际列顺序调整索引）
-        data_dict = {
-            "coord": data[:, :3].astype(np.float32),  # 前3列：坐标
-            "color": data[:, 3:6].astype(np.float32) / 255.0,  # 中间3列：颜色（归一化到0-1）
-            "segment": data[:, 6].astype(np.int32)  # 最后1列：标签
-        }
-
-        # 补充必要字段（保持与原逻辑兼容）
+        data_dict = {}
+        assets = os.listdir(data_path)
+        for asset in assets:
+            if not asset.endswith(".npy"):
+                continue
+            if asset[:-4] not in self.VALID_ASSETS:
+                continue
+            data_dict[asset[:-4]] = np.load(os.path.join(data_path, asset))
         data_dict["name"] = name
         data_dict["split"] = split
-        data_dict["instance"] = np.ones(data_dict["coord"].shape[0], dtype=np.int32) * -1  # 无实例时设为-1
 
+        if "coord" in data_dict.keys():
+            data_dict["coord"] = data_dict["coord"].astype(np.float32)
+
+        if "color" in data_dict.keys():
+            data_dict["color"] = data_dict["color"].astype(np.float32)
+
+        if "normal" in data_dict.keys():
+            data_dict["normal"] = data_dict["normal"].astype(np.float32)
+
+        if "segment" in data_dict.keys():
+            data_dict["segment"] = data_dict["segment"].reshape([-1]).astype(np.int32)
+        else:
+            data_dict["segment"] = (
+                np.ones(data_dict["coord"].shape[0], dtype=np.int32) * -1
+            )
+
+        if "instance" in data_dict.keys():
+            data_dict["instance"] = data_dict["instance"].reshape([-1]).astype(np.int32)
+        else:
+            data_dict["instance"] = (
+                np.ones(data_dict["coord"].shape[0], dtype=np.int32) * -1
+            )
         return data_dict
 
     def get_data_name(self, idx):
-        return os.path.splitext(os.path.basename(self.data_list[idx % len(self.data_list)]))[0]
+        return os.path.basename(self.data_list[idx % len(self.data_list)])
 
     def get_split_name(self, idx):
         return os.path.basename(

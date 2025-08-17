@@ -11,7 +11,7 @@ data = dict(
     names=class_names,
     # 数据加载器的通用参数
     loader=dict(
-        batch_size=4,
+        batch_size=2,
         num_workers=4,
         shuffle=True,
     ),

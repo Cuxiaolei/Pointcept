@@ -71,7 +71,7 @@ param_dicts = [dict(keyword="block", lr=0.0003)]  # 同步调整block的学习�
 
 # dataset settings
 dataset_type = "S3DISDataset"
-data_root = "root/data/data_s3dis_pointNeXt"
+data_root = "/root/data/data_s3dis_pointNeXt"
 
 data = dict(
     train=dict(

@@ -9,7 +9,6 @@ mix_prob = 0.8  # 混合精度训练的概率（保留，无需修改）
 empty_cache = False  # 训练中是否清空CUDA缓存（保留默认）
 enable_amp = True  # 启用自动混合精度训练（保留，加速训练）
 
-
 # model settings
 model = dict(
     type="DefaultSegmentorV2",
@@ -72,12 +71,13 @@ param_dicts = [dict(keyword="block", lr=0.0003)]  # 同步调整block的学习�
 
 # dataset settings
 dataset_type = "S3DISDataset"
+data_root = "root/data/data_s3dis_pointNeXt"
 
 data = dict(
     train=dict(
         type=dataset_type,
         split="train", # 对应train_scenes.txt
-        data_root=_base_.data_root,
+        data_root=data_root,
         transform=[
             # 1. 坐标几何增强（核心）
             dict(type="CenterShift", apply_z=True),  # 坐标中心化（稳定几何基准）
@@ -120,7 +120,7 @@ data = dict(
     val=dict(
         type=dataset_type,
         split="val",  # 对应val_scenes.txt
-        data_root=_base_.data_root,
+        data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),  # 与训练一致的中心化
             dict(type="Copy", keys_dict={"segment": "origin_segment"}),  # 保留原始标签用于评估
@@ -146,7 +146,7 @@ data = dict(
     test=dict(
         type=dataset_type,
         split="test",  # 对应test_scenes.txt
-        data_root=_base_.data_root,
+        data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
             dict(type="NormalizeColor"),  # 颜色归一化

@@ -4,8 +4,6 @@ class_names = ["class0", "class1", "class2"]  # 替换为你的类别名称
 num_classes = 3
 ignore_index = -1  # 无无效标签则保持-1
 
-data_root = "root/data/data_s3dis_pointNeXt"
-
 # 基础数据配置（主配置会复用这些参数）
 data = dict(
     num_classes=num_classes,

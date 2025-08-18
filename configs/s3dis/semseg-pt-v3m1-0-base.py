@@ -20,12 +20,9 @@ model = dict(
         # 以下backbone参数均保留默认（PT-v3m1的基础结构）
         order=("z", "z-trans", "hilbert", "hilbert-trans"),
         stride=(2, 2, 2, 2),
-        # 减少每个阶段的层数（原(2,2,2,6,2)）
-        enc_depths=(1, 1, 1, 2, 1),
-        # 降低通道数（原(32,64,128,256,512)）
-        enc_channels=(16, 32, 64, 128, 256),
-        # 减少注意力头数（原(2,4,8,16,32)）
-        enc_num_head=(1, 2, 4, 8, 8),
+        enc_depths=(2, 2, 2, 6, 2),
+        enc_channels=(32, 64, 128, 256, 512),
+        enc_num_head=(2, 4, 8, 16, 32),
         enc_patch_size=(1024, 1024, 1024, 1024, 1024),
         dec_depths=(2, 2, 2, 2),
         dec_channels=(64, 64, 128, 256),

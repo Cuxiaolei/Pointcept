@@ -37,7 +37,7 @@ model = dict(
         shuffle_orders=True,
         pre_norm=True,
         enable_rpe=False,  # 基础版PT-v3不启用RPE，保留默认
-        enable_flash=True,
+        enable_flash=False,
         upcast_attention=False,
         upcast_softmax=False,
         cls_mode=False,
@@ -51,12 +51,13 @@ model = dict(
     criteria=[
         # 关键：三分类可简化损失函数（保留交叉熵，可选删除LovaszLoss）
         dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1),
-        dict(type="LovaszLoss", mode="multiclass", loss_weight=1.0, ignore_index=-1),  # 可选删除
+        # dict(type="LovaszLoss", mode="multiclass", loss_weight=1.0, ignore_index=-1),  # 可选删除
     ],
 )
 
 # scheduler settings
 epoch = 100  # 原3000，三分类任务更简单，可减少轮次
+
 optimizer = dict(type="AdamW", lr=0.003, weight_decay=0.05)  # 学习率从0.006减半（适配小任务）
 scheduler = dict(
     type="OneCycleLR",
@@ -66,6 +67,7 @@ scheduler = dict(
     div_factor=10.0,
     final_div_factor=1000.0,
 )
+
 param_dicts = [dict(keyword="block", lr=0.0003)]  # 同步调整block的学习率
 
 
@@ -89,10 +91,20 @@ data = dict(
             dict(type="RandomFlip", p=0.5),  # 随机翻转（提升对称性鲁棒性）
             dict(type="RandomJitter", sigma=0.005, clip=0.02),  # 坐标微抖动（抗噪声）
 
+
+
             # 2. 颜色增强（针对你的颜色特征）
             dict(type="ChromaticAutoContrast", p=0.2, blend_factor=None),  # 自动对比度调整
             dict(type="ChromaticTranslation", p=0.95, ratio=0.05),  # 颜色偏移（模拟光照变化）
             dict(type="ChromaticJitter", p=0.95, std=0.05),  # 颜色抖动（增强鲁棒性）
+
+            # 增强几何扰动至过度程度，破坏特征结构
+            # dict(type="RandomJitter", sigma=0.1, clip=0.2),  # 原sigma=0.005，大幅增加坐标噪声
+            # dict(type="RandomRotate", angle=[-30, 30], axis="z", p=0.8),  # 原[-1,1]，旋转角度过大
+            # dict(type="RandomScale", scale=[0.5, 1.5]),  # 原[0.9,1.1]，尺度波动剧烈
+            # 颜色特征破坏
+            # dict(type="ChromaticJitter", p=0.95, std=0.5),  # 原std=0.05，颜色噪声过大
+            # dict(type="ChromaticTranslation", p=0.95, ratio=0.5),  # 原0.05，颜色偏移过度
 
             # 3. 规整化与裁剪
             dict(
@@ -124,14 +136,15 @@ data = dict(
         transform=[
             dict(type="CenterShift", apply_z=True),  # 与训练一致的中心化
             dict(type="Copy", keys_dict={"segment": "origin_segment"}),  # 保留原始标签用于评估
-            dict(
-                type="GridSample",
-                grid_size=0.02,
-                hash_type="fnv",
-                mode="train",
-                return_grid_coord=True,
-                return_inverse=True,  # 逆映射用于还原预测
-            ),
+            # dict(
+            #     type="GridSample",
+            #     grid_size=0.02,
+            #     hash_type="fnv",
+            #     mode="train",
+            #     return_grid_coord=True,
+            #     return_inverse=True,  # 逆映射用于还原预测
+            # ),
+            dict(type="GridSample", grid_size=0.1, hash_type="fnv", mode="train"),  # 同训练集，降低特征精度
             dict(type="CenterShift", apply_z=False),
             dict(type="NormalizeColor"),  # 颜色归一化（与训练一致）
             dict(type="ToTensor"),

@@ -1,12 +1,8 @@
-_base_ = [
-    "../_base_/default_runtime.py",
-    "../_base_/dataset/s3dis.py"  # 继承基础数据集配置
-]
+_base_ = ["../_base_/default_runtime.py"]
 # misc custom setting
-batch_size = 2  # bs: total bs in all gpus
+batch_size = 12  # bs: total bs in all gpus
 mix_prob = 0.8
-
-empty_cache = True
+empty_cache = False
 enable_amp = False
 
 # model settings
@@ -14,8 +10,8 @@ model = dict(
     type="DefaultSegmentor",
     backbone=dict(
         type="PT-v2m1",
-        in_channels=3,
-        num_classes=3,
+        in_channels=6,
+        num_classes=13,
         patch_embed_depth=2,
         patch_embed_channels=48,
         patch_embed_groups=6,
@@ -41,21 +37,35 @@ model = dict(
 )
 
 # scheduler settings
-epoch = 100
+epoch = 3000
 optimizer = dict(type="AdamW", lr=0.006, weight_decay=0.05)
 scheduler = dict(type="MultiStepLR", milestones=[0.6, 0.8], gamma=0.1)
 
 # dataset settings
 dataset_type = "S3DISDataset"
-data_root = "/root/data/data_s3dis_pointNeXt"
+data_root = "data/s3dis"
 
 data = dict(
-    num_classes=3,
+    num_classes=13,
     ignore_index=-1,
-
+    names=[
+        "ceiling",
+        "floor",
+        "wall",
+        "beam",
+        "column",
+        "window",
+        "door",
+        "table",
+        "chair",
+        "sofa",
+        "bookcase",
+        "board",
+        "clutter",
+    ],
     train=dict(
         type=dataset_type,
-        split="train",
+        split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_6"),
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
@@ -89,14 +99,14 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment"),
-                feat_keys=("color",),
+                feat_keys=["coord", "color"],
             ),
         ],
         test_mode=False,
     ),
     val=dict(
         type=dataset_type,
-        split="val",
+        split="Area_5",
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
@@ -115,14 +125,14 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment", "origin_segment", "inverse"),
-                feat_keys=("color",),
+                feat_keys=["coord", "color"],
             ),
         ],
         test_mode=False,
     ),
     test=dict(
         type=dataset_type,
-        split="test",
+        split="Area_5",
         data_root=data_root,
         transform=[dict(type="CenterShift", apply_z=True), dict(type="NormalizeColor")],
         test_mode=True,

@@ -1,8 +1,11 @@
-_base_ = ["../_base_/default_runtime.py"]
+_base_ = [
+    "../_base_/default_runtime.py",
+    "../_base_/dataset/s3dis.py"  # 继承基础数据集配置
+]
 # misc custom setting
-batch_size = 12  # bs: total bs in all gpus
+batch_size = 2  # bs: total bs in all gpus
 mix_prob = 0.8
-empty_cache = False
+empty_cache = True
 enable_amp = True
 
 # model settings
@@ -10,43 +13,28 @@ model = dict(
     type="DefaultSegmentor",
     backbone=dict(
         type="PointTransformer-Seg50",
-        in_channels=6,
-        num_classes=13,
+        in_channels=3,
+        num_classes=3,
     ),
     criteria=[dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1)],
 )
 
 
 # scheduler settings
-epoch = 3000
-optimizer = dict(type="AdamW", lr=0.006, weight_decay=0.05)
+epoch = 100
+optimizer = dict(type="AdamW", lr=0.003, weight_decay=0.05)
 scheduler = dict(type="MultiStepLR", milestones=[0.6, 0.8], gamma=0.1)
 
 # dataset settings
 dataset_type = "S3DISDataset"
-data_root = "data/s3dis"
+data_root = "/root/data/data_s3dis_pointNeXt"
 
 data = dict(
-    num_classes=13,
+    num_classes=3,
     ignore_index=-1,
-    names=[
-        "ceiling",
-        "floor",
-        "wall",
-        "beam",
-        "column",
-        "window",
-        "door",
-        "table",
-        "chair",
-        "sofa",
-        "bookcase",
-        "board",
-        "clutter",
-    ],
     train=dict(
         type=dataset_type,
-        split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_6"),
+        split="train",
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
@@ -67,12 +55,12 @@ data = dict(
             # dict(type="RandomColorDrop", p=0.2, color_augment=0.0),
             dict(
                 type="GridSample",
-                grid_size=0.04,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="train",
                 return_grid_coord=True,
             ),
-            dict(type="SphereCrop", point_max=100000, mode="random"),
+            dict(type="SphereCrop", point_max=60000, mode="random"),
             dict(type="CenterShift", apply_z=False),
             dict(type="NormalizeColor"),
             # dict(type="ShufflePoint"),
@@ -80,21 +68,21 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment"),
-                feat_keys=["coord", "color"],
+                feat_keys=("color",),
             ),
         ],
         test_mode=False,
     ),
     val=dict(
         type=dataset_type,
-        split="Area_5",
+        split="val",
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
             dict(type="Copy", keys_dict={"segment": "origin_segment"}),
             dict(
                 type="GridSample",
-                grid_size=0.04,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="train",
                 return_grid_coord=True,
@@ -106,21 +94,21 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment", "origin_segment", "inverse"),
-                feat_keys=["coord", "color"],
+                feat_keys=("color",),
             ),
         ],
         test_mode=False,
     ),
     test=dict(
         type=dataset_type,
-        split="Area_5",
+        split="test",
         data_root=data_root,
         transform=[dict(type="CenterShift", apply_z=True), dict(type="NormalizeColor")],
         test_mode=True,
         test_cfg=dict(
             voxelize=dict(
                 type="GridSample",
-                grid_size=0.04,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="test",
                 return_grid_coord=True,
@@ -132,7 +120,7 @@ data = dict(
                 dict(
                     type="Collect",
                     keys=("coord", "grid_coord", "index"),
-                    feat_keys=("coord", "color"),
+                    feat_keys=("color",),
                 ),
             ],
             aug_transform=[

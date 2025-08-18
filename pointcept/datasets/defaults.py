@@ -94,27 +94,28 @@ class DefaultDataset(Dataset):
         return data_list
 
     def get_data(self, idx):
-        data_path = self.data_list[idx % len(self.data_list)]  # 现在指向 .npy 文件
+        data_path = self.data_list[idx % len(self.data_list)]
         name = self.get_data_name(idx)
         split = self.get_split_name(idx)
         if self.cache:
             cache_name = f"pointcept-{name}"
             return shared_dict(cache_name)
 
-        # 加载单个 .npy 文件（假设格式为 [x, y, z, r, g, b, label]）
+        # 加载10通道.npy文件（x, y, z, r, g, b, nx, ny, nz, label）
         data = np.load(data_path).astype(np.float32)
 
-        # 解析数据（根据你的实际列顺序调整索引）
+        # 解析数据（根据10通道顺序调整索引）
         data_dict = {
             "coord": data[:, :3].astype(np.float32),  # 前3列：坐标
-            "color": data[:, 3:6].astype(np.float32) / 255.0,  # 中间3列：颜色（归一化到0-1）
-            "segment": data[:, 6].astype(np.int32)  # 最后1列：标签
+            "color": data[:, 3:6].astype(np.float32) / 255.0,  # 3-5列：颜色（归一化）
+            "normal": data[:, 6:9].astype(np.float32),  # 6-8列：法向量
+            "segment": data[:, 9].astype(np.int32)  # 第9列：标签
         }
 
-        # 补充必要字段（保持与原逻辑兼容）
+        # 补充必要字段
         data_dict["name"] = name
         data_dict["split"] = split
-        data_dict["instance"] = np.ones(data_dict["coord"].shape[0], dtype=np.int32) * -1  # 无实例时设为-1
+        data_dict["instance"] = np.ones(data_dict["coord"].shape[0], dtype=np.int32) * -1
 
         return data_dict
 

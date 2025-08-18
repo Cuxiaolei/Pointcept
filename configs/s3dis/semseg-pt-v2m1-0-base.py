@@ -76,7 +76,7 @@ data = dict(
             # dict(type="RandomColorDrop", p=0.2, color_augment=0.0),
             dict(
                 type="GridSample",
-                grid_size=0.04,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="train",
                 return_grid_coord=True,
@@ -129,7 +129,7 @@ data = dict(
         test_cfg=dict(
             voxelize=dict(
                 type="GridSample",
-                grid_size=0.04,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="test",
                 return_grid_coord=True,

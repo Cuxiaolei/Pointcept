@@ -135,7 +135,7 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment"),  # 保留坐标、网格坐标、标签
-                feat_keys=("color",),  # 仅保留颜色特征（你的特征只有颜色）
+                feat_keys=("color", "normal",),  # 仅保留颜色特征（你的特征只有颜色）
             ),
         ],
         test_mode=False,
@@ -162,7 +162,7 @@ data = dict(
             dict(
                 type="Collect",
                 keys=("coord", "grid_coord", "segment", "origin_segment", "inverse"),
-                feat_keys=("color",),
+                feat_keys=("color", "normal",),  # 仅颜色特征
             ),
         ],
         test_mode=False,
@@ -191,7 +191,7 @@ data = dict(
                 dict(
                     type="Collect",
                     keys=("coord", "grid_coord", "index"),
-                    feat_keys=("color",),
+                    feat_keys=("color", "normal",),
                 ),
             ],
             aug_transform=[

@@ -63,20 +63,13 @@ epoch = 100  # 原3000，三分类任务更简单，可减少轮次
 # optimizer = dict(type="AdamW", lr=0.003, weight_decay=0.05)  # 学习率从0.006减半（适配小任务）
 # 学习率大幅提高，导致训练震荡
 optimizer = dict(type="AdamW", lr=0.1, weight_decay=0.01)  # 原lr=0.003，学习率过高
-# scheduler = dict(
-#     type="OneCycleLR",
-#     max_lr=[0.003, 0.0003],  # 同步学习率减半（与optimizer.lr匹配）
-#     pct_start=0.05,
-#     anneal_strategy="cos",
-#     div_factor=10.0,
-#     final_div_factor=1000.0,
-# )
-
-# 调整 scheduler 加剧波动
 scheduler = dict(
     type="OneCycleLR",
-    max_lr=[0.1, 0.01],  # 同步提高学习率
-    pct_start=0.5,  # 原0.05，延长快速上升阶段，加剧不稳定性
+    max_lr=[0.1, 0.01],  # 同步学习率减半（与optimizer.lr匹配）
+    pct_start=0.5,
+    anneal_strategy="cos",
+    div_factor=10.0,
+    final_div_factor=1000.0,
 )
 
 param_dicts = [dict(keyword="block", lr=0.0003)]  # 同步调整block的学习率

@@ -7,7 +7,7 @@ batch_size = 2  # bs: total bs in all gpus
 mix_prob = 0.8
 
 empty_cache = True
-enable_amp = False
+enable_amp = True
 
 # model settings
 model = dict(
@@ -81,7 +81,7 @@ data = dict(
                 mode="train",
                 return_grid_coord=True,
             ),
-            dict(type="SphereCrop", point_max=80000, mode="random"),
+            dict(type="SphereCrop", point_max=60000, mode="random"),
             dict(type="CenterShift", apply_z=False),
             dict(type="NormalizeColor"),
             # dict(type="ShufflePoint"),

@@ -103,7 +103,7 @@ data = dict(
             dict(type="Copy", keys_dict={"segment": "origin_segment"}),
             dict(
                 type="GridSample",
-                grid_size=0.04,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="train",
                 return_grid_coord=True,

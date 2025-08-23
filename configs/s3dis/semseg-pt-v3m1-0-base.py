@@ -3,7 +3,7 @@ _base_ = [
     "../_base_/dataset/s3dis.py"  # 继承基础数据集配置
 ]
 # misc custom setting
-batch_size = 1  # 根据你的GPU显存调整（原12，若单卡显存不足可减小）
+batch_size = 2  # 根据你的GPU显存调整（原12，若单卡显存不足可减小）
 num_worker = 8  # 原24，根据CPU核心数调整（建议设为GPU数*4）
 mix_prob = 0.8  # 混合精度训练的概率（保留，无需修改）
 empty_cache = True  # 训练中是否清空CUDA缓存（保留默认）
@@ -20,12 +20,9 @@ model = dict(
         # 以下backbone参数均保留默认（PT-v3m1的基础结构）
         order=("z", "z-trans", "hilbert", "hilbert-trans"),
         stride=(2, 2, 2, 2),
-        # 减少每个阶段的层数（原(2,2,2,6,2)）
-        enc_depths=(1, 1, 1, 2, 1),
-        # 降低通道数（原(32,64,128,256,512)）
-        enc_channels=(16, 32, 64, 128, 256),
-        # 减少注意力头数（原(2,4,8,16,32)）
-        enc_num_head=(1, 2, 4, 8, 8),
+        enc_depths=(2, 2, 2, 6, 2),
+        enc_channels=(32, 64, 128, 256, 512),
+        enc_num_head=(2, 4, 8, 16, 32),
         enc_patch_size=(1024, 1024, 1024, 1024, 1024),
         dec_depths=(2, 2, 2, 2),
         dec_channels=(64, 64, 128, 256),
@@ -54,23 +51,21 @@ model = dict(
     criteria=[
         # 关键：三分类可简化损失函数（保留交叉熵，可选删除LovaszLoss）
         dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1),
-        # dict(type="LovaszLoss", mode="multiclass", loss_weight=1.0, ignore_index=-1),  # 可选删除
+        dict(type="LovaszLoss", mode="multiclass", loss_weight=1.0, ignore_index=-1),  # 可选删除
     ],
 )
 
 # scheduler settings
 epoch = 100  # 原3000，三分类任务更简单，可减少轮次
-
-optimizer = dict(type="AdamW", lr=0.1, weight_decay=0.01)  # 学习率从0.006减半（适配小任务）
+optimizer = dict(type="AdamW", lr=0.003, weight_decay=0.05)  # 学习率从0.006减半（适配小任务）
 scheduler = dict(
     type="OneCycleLR",
-    max_lr=[0.1, 0.01],  # 同步学习率减半（与optimizer.lr匹配）
-    pct_start=0.5,
+    max_lr=[0.003, 0.0003],  # 同步学习率减半（与optimizer.lr匹配）
+    pct_start=0.05,
     anneal_strategy="cos",
     div_factor=10.0,
     final_div_factor=1000.0,
 )
-
 param_dicts = [dict(keyword="block", lr=0.0003)]  # 同步调整block的学习率
 
 
@@ -87,27 +82,17 @@ data = dict(
             # 1. 坐标几何增强（核心）
             dict(type="CenterShift", apply_z=True),  # 坐标中心化（稳定几何基准）
             dict(type="RandomDropout", dropout_ratio=0.2, dropout_application_ratio=0.2),  # 随机丢点，模拟遮挡
-            # dict(type="RandomRotate", angle=[-1, 1], axis="z", center=[0, 0, 0], p=0.5),  # 绕z轴旋转（适应场景方向差异）
+            dict(type="RandomRotate", angle=[-1, 1], axis="z", center=[0, 0, 0], p=0.5),  # 绕z轴旋转（适应场景方向差异）
             dict(type="RandomRotate", angle=[-1 / 64, 1 / 64], axis="x", p=0.5),  # x/y轴微旋转（适应倾斜）
             dict(type="RandomRotate", angle=[-1 / 64, 1 / 64], axis="y", p=0.5),
-            # dict(type="RandomScale", scale=[0.9, 1.1]),  # 尺度缩放（适应不同距离的点云）
+            dict(type="RandomScale", scale=[0.9, 1.1]),  # 尺度缩放（适应不同距离的点云）
             dict(type="RandomFlip", p=0.5),  # 随机翻转（提升对称性鲁棒性）
-            # dict(type="RandomJitter", sigma=0.005, clip=0.02),  # 坐标微抖动（抗噪声）
-
-
+            dict(type="RandomJitter", sigma=0.005, clip=0.02),  # 坐标微抖动（抗噪声）
 
             # 2. 颜色增强（针对你的颜色特征）
             dict(type="ChromaticAutoContrast", p=0.2, blend_factor=None),  # 自动对比度调整
-            # dict(type="ChromaticTranslation", p=0.95, ratio=0.05),  # 颜色偏移（模拟光照变化）
-            # dict(type="ChromaticJitter", p=0.95, std=0.05),  # 颜色抖动（增强鲁棒性）
-
-            # 增强几何扰动至过度程度，破坏特征结构
-            dict(type="RandomJitter", sigma=0.1, clip=0.2),  # 原sigma=0.005，大幅增加坐标噪声
-            dict(type="RandomRotate", angle=[-30, 30], axis="z", center=[0, 0, 0], p=0.8),  # 绕z轴旋转（适应场景方向差异）
-            dict(type="RandomScale", scale=[0.5, 1.5]),  # 原[0.9,1.1]，尺度波动剧烈
-            # 颜色特征破坏
-            dict(type="ChromaticJitter", p=0.95, std=0.5),  # 原std=0.05，颜色噪声过大
-            dict(type="ChromaticTranslation", p=0.95, ratio=0.5),  # 原0.05，颜色偏移过度
+            dict(type="ChromaticTranslation", p=0.95, ratio=0.05),  # 颜色偏移（模拟光照变化）
+            dict(type="ChromaticJitter", p=0.95, std=0.05),  # 颜色抖动（增强鲁棒性）
 
             # 3. 规整化与裁剪
             dict(
@@ -141,7 +126,7 @@ data = dict(
             dict(type="Copy", keys_dict={"segment": "origin_segment"}),  # 保留原始标签用于评估
             dict(
                 type="GridSample",
-                grid_size=0.1,
+                grid_size=0.02,
                 hash_type="fnv",
                 mode="train",
                 return_grid_coord=True,

@@ -4,6 +4,8 @@ Tester
 Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
 Please cite our work if the code is helpful to you.
 """
+
+
 import csv
 import time
 from torch.utils.data import DataLoader
@@ -53,6 +55,7 @@ class TesterBase:
         self.cfg = cfg
         self.verbose = verbose
         if self.verbose and model is None:
+            # if model is not none, trigger tester with trainer, no need to print config
             self.logger.info(f"Save path: {cfg.save_path}")
             self.logger.info(f"Config:\n{cfg.pretty_text}")
         if model is None:
@@ -82,10 +85,10 @@ class TesterBase:
             for key, value in checkpoint["state_dict"].items():
                 if key.startswith("module."):
                     if comm.get_world_size() == 1:
-                        key = key[7:]  # 移除module前缀（单卡）
+                        key = key[7:]  # module.xxx.xxx -> xxx.xxx
                 else:
                     if comm.get_world_size() > 1:
-                        key = "module." + key  # 添加module前缀（多卡）
+                        key = "module." + key  # xxx.xxx -> module.xxx.xxx
                 weight[key] = value
             model.load_state_dict(weight, strict=True)
             self.logger.info(
@@ -119,7 +122,7 @@ class TesterBase:
 
     @staticmethod
     def collate_fn(batch):
-        raise NotImplementedError  # 父类仅定义接口
+        raise collate_fn(batch)
 
 
 @TESTERS.register_module()
@@ -135,240 +138,229 @@ class SemSegTester(TesterBase):
         target_meter = AverageMeter()
         self.model.eval()
 
-        # 结果保存路径
         save_path = os.path.join(self.cfg.save_path, "result")
         make_dirs(save_path)
-        # 数据集专属提交文件夹（保持原逻辑）
+        # create submit folder only on main process
         if (
-            self.cfg.data.test.type in ["ScanNetDataset", "ScanNet200Dataset", "ScanNetPPDataset"]
-            and comm.is_main_process()
-        ):
+            self.cfg.data.test.type == "ScanNetDataset"
+            or self.cfg.data.test.type == "ScanNet200Dataset"
+            or self.cfg.data.test.type == "ScanNetPPDataset"
+        ) and comm.is_main_process():
             make_dirs(os.path.join(save_path, "submit"))
-        elif self.cfg.data.test.type == "SemanticKITTIDataset" and comm.is_main_process():
+        elif (
+            self.cfg.data.test.type == "SemanticKITTIDataset" and comm.is_main_process()
+        ):
             make_dirs(os.path.join(save_path, "submit"))
         elif self.cfg.data.test.type == "NuScenesDataset" and comm.is_main_process():
             import json
+
             make_dirs(os.path.join(save_path, "submit", "lidarseg", "test"))
             make_dirs(os.path.join(save_path, "submit", "test"))
             submission = dict(
-                meta=dict(use_camera=False, use_lidar=True, use_radar=False, use_map=False, use_external=False)
+                meta=dict(
+                    use_camera=False,
+                    use_lidar=True,
+                    use_radar=False,
+                    use_map=False,
+                    use_external=False,
+                )
             )
-            with open(os.path.join(save_path, "submit", "test", "submission.json"), "w") as f:
+            with open(
+                os.path.join(save_path, "submit", "test", "submission.json"), "w"
+            ) as f:
                 json.dump(submission, f, indent=4)
         comm.synchronize()
-
-        record = {}  # 记录每个场景的intersection/union/target
-        # 场景级推理循环
+        record = {}
+        # fragment inference
         for idx, data_dict in enumerate(self.test_loader):
             start = time.time()
-            data_dict = data_dict[0]  # 批次大小为1，取第一个元素
+            data_dict = data_dict[0]  # current assume batch size is 1
             fragment_list = data_dict.pop("fragment_list")
             segment = data_dict.pop("segment")
             data_name = data_dict.pop("name")
-            pred_save_path = os.path.join(save_path, f"{data_name}_pred.npy")
-
-            # 若已存在预测结果，直接加载（避免重复计算）
+            pred_save_path = os.path.join(save_path, "{}_pred.npy".format(data_name))
             if os.path.isfile(pred_save_path):
-                logger.info(f"{idx + 1}/{len(self.test_loader)}: {data_name}, loaded pred and label.")
+                logger.info(
+                    "{}/{}: {}, loaded pred and label.".format(
+                        idx + 1, len(self.test_loader), data_name
+                    )
+                )
                 pred = np.load(pred_save_path)
-                if "origin_segment" in data_dict:
+                if "origin_segment" in data_dict.keys():
                     segment = data_dict["origin_segment"]
             else:
-                # 碎片级推理（处理大场景分割）
                 pred = torch.zeros((segment.size, self.cfg.data.num_classes)).cuda()
-                fragment_batch_size = 1
                 for i in range(len(fragment_list)):
-                    s_i, e_i = i * fragment_batch_size, min((i + 1) * fragment_batch_size, len(fragment_list))
-                    input_dict = self.__class__.collate_fn(fragment_list[s_i:e_i])
-                    # 数据转GPU
-                    for key in input_dict:
+                    fragment_batch_size = 1
+                    s_i, e_i = i * fragment_batch_size, min(
+                        (i + 1) * fragment_batch_size, len(fragment_list)
+                    )
+                    input_dict = collate_fn(fragment_list[s_i:e_i])
+                    for key in input_dict.keys():
                         if isinstance(input_dict[key], torch.Tensor):
                             input_dict[key] = input_dict[key].cuda(non_blocking=True)
                     idx_part = input_dict["index"]
-
-                    # 模型推理（无梯度）
                     with torch.no_grad():
-                        pred_part = self.model(input_dict)["seg_logits"]  # (碎片点数, 类别数)
-                        pred_part = F.softmax(pred_part, dim=-1)
+                        pred_part = self.model(input_dict)["seg_logits"]  # (n, k)
+                        pred_part = F.softmax(pred_part, -1)
                         if self.cfg.empty_cache:
-                            torch.cuda.empty_cache()  # 释放GPU缓存
-                        # 拼接碎片预测结果
+                            torch.cuda.empty_cache()
                         bs = 0
                         for be in input_dict["offset"]:
                             pred[idx_part[bs:be], :] += pred_part[bs:be]
                             bs = be
-                    logger.info(
-                        f"Test: {idx + 1}/{len(self.test_loader)}-{data_name}, Batch: {i}/{len(fragment_list)}"
-                    )
 
-                # 生成最终预测（取概率最大的类别，ScanNetPP取Top3）
+                    logger.info(
+                        "Test: {}/{}-{data_name}, Batch: {batch_idx}/{batch_num}".format(
+                            idx + 1,
+                            len(self.test_loader),
+                            data_name=data_name,
+                            batch_idx=i,
+                            batch_num=len(fragment_list),
+                        )
+                    )
                 if self.cfg.data.test.type == "ScanNetPPDataset":
-                    pred = pred.topk(3, dim=1)[1].cpu().numpy()
+                    pred = pred.topk(3, dim=1)[1].data.cpu().numpy()
                 else:
-                    pred = pred.max(1)[1].cpu().numpy()
-                # 若存在原始分割标签，还原索引
-                if "origin_segment" in data_dict:
-                    assert "inverse" in data_dict, "inverse index missing for origin segment"
+                    pred = pred.max(1)[1].data.cpu().numpy()
+                if "origin_segment" in data_dict.keys():
+                    assert "inverse" in data_dict.keys()
                     pred = pred[data_dict["inverse"]]
                     segment = data_dict["origin_segment"]
-                np.save(pred_save_path, pred)  # 保存预测结果
-
-            # 生成数据集专属提交文件（保持原逻辑）
-            if self.cfg.data.test.type in ["ScanNetDataset", "ScanNet200Dataset"]:
+                np.save(pred_save_path, pred)
+            if (
+                self.cfg.data.test.type == "ScanNetDataset"
+                or self.cfg.data.test.type == "ScanNet200Dataset"
+            ):
                 np.savetxt(
-                    os.path.join(save_path, "submit", f"{data_name}.txt"),
+                    os.path.join(save_path, "submit", "{}.txt".format(data_name)),
                     self.test_loader.dataset.class2id[pred].reshape([-1, 1]),
                     fmt="%d",
                 )
             elif self.cfg.data.test.type == "ScanNetPPDataset":
                 np.savetxt(
-                    os.path.join(save_path, "submit", f"{data_name}.txt"),
+                    os.path.join(save_path, "submit", "{}.txt".format(data_name)),
                     pred.astype(np.int32),
                     delimiter=",",
                     fmt="%d",
                 )
-                pred = pred[:, 0]  # 计算mIoU时取Top1预测
+                pred = pred[:, 0]  # for mIoU, TODO: support top3 mIoU
             elif self.cfg.data.test.type == "SemanticKITTIDataset":
+                # 00_000000 -> 00, 000000
                 sequence_name, frame_name = data_name.split("_")
-                seq_pred_path = os.path.join(save_path, "submit", "sequences", sequence_name, "predictions")
-                make_dirs(seq_pred_path)
-                # 映射回原始类别ID
+                os.makedirs(
+                    os.path.join(
+                        save_path, "submit", "sequences", sequence_name, "predictions"
+                    ),
+                    exist_ok=True,
+                )
                 submit = pred.astype(np.uint32)
-                submit = np.vectorize(self.test_loader.dataset.learning_map_inv.__getitem__)(submit).astype(np.uint32)
-                submit.tofile(os.path.join(seq_pred_path, f"{frame_name}.label"))
+                submit = np.vectorize(
+                    self.test_loader.dataset.learning_map_inv.__getitem__
+                )(submit).astype(np.uint32)
+                submit.tofile(
+                    os.path.join(
+                        save_path,
+                        "submit",
+                        "sequences",
+                        sequence_name,
+                        "predictions",
+                        f"{frame_name}.label",
+                    )
+                )
             elif self.cfg.data.test.type == "NuScenesDataset":
-                # NuScenes标签需+1（背景从0→1）
                 np.array(pred + 1).astype(np.uint8).tofile(
-                    os.path.join(save_path, "submit", "lidarseg", "test", f"{data_name}_lidarseg.bin")
+                    os.path.join(
+                        save_path,
+                        "submit",
+                        "lidarseg",
+                        "test",
+                        "{}_lidarseg.bin".format(data_name),
+                    )
                 )
 
-            # 计算当前场景的交并比（IOU）和准确率（ACC）
             intersection, union, target = intersection_and_union(
                 pred, segment, self.cfg.data.num_classes, self.cfg.data.ignore_index
             )
-            # 更新全局计数器
             intersection_meter.update(intersection)
             union_meter.update(union)
             target_meter.update(target)
-            # 记录当前场景的原始指标（用于后续CSV计算）
-            record[data_name] = dict(intersection=intersection, union=union, target=target)
-
-            # 计算当前场景的瞬时指标
-            mask = union != 0
-            iou_class = intersection / (union + 1e-10)
-            scene_iou = np.mean(iou_class[mask]) if mask.any() else 0.0
-            scene_acc = sum(intersection) / (sum(target) + 1e-10)
-            # 全局平均指标
-            global_miou = np.mean(intersection_meter.sum / (union_meter.sum + 1e-10))
-            global_macc = np.mean(intersection_meter.sum / (target_meter.sum + 1e-10))
-
-            # 更新批次时间并打印日志
-            batch_time.update(time.time() - start)
-            logger.info(
-                f"Test: {data_name} [{idx + 1}/{len(self.test_loader)}]-{segment.size} "
-                f"Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) "
-                f"Accuracy {scene_acc:.4f} ({global_macc:.4f}) "
-                f"mIoU {scene_iou:.4f} ({global_miou:.4f})"
+            record[data_name] = dict(
+                intersection=intersection, union=union, target=target
             )
 
-        # 多进程同步结果（分布式训练）
-        logger.info("Syncing results across processes ...")
+            mask = union != 0
+            iou_class = intersection / (union + 1e-10)
+            iou = np.mean(iou_class[mask])
+            acc = sum(intersection) / (sum(target) + 1e-10)
+
+            m_iou = np.mean(intersection_meter.sum / (union_meter.sum + 1e-10))
+            m_acc = np.mean(intersection_meter.sum / (target_meter.sum + 1e-10))
+
+            batch_time.update(time.time() - start)
+            logger.info(
+                "Test: {} [{}/{}]-{} "
+                "Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) "
+                "Accuracy {acc:.4f} ({m_acc:.4f}) "
+                "mIoU {iou:.4f} ({m_iou:.4f})".format(
+                    data_name,
+                    idx + 1,
+                    len(self.test_loader),
+                    segment.size,
+                    batch_time=batch_time,
+                    acc=acc,
+                    m_acc=m_acc,
+                    iou=iou,
+                    m_iou=m_iou,
+                )
+            )
+
+        logger.info("Syncing ...")
         comm.synchronize()
-        record_sync = comm.gather(record, dst=0)  # 收集所有进程的场景记录
+        record_sync = comm.gather(record, dst=0)
 
-        # 仅主进程处理最终结果并写入CSV
         if comm.is_main_process():
-            # 合并所有进程的场景记录
-            all_record = {}
-            for proc_record in record_sync:
-                all_record.update(proc_record)
-                del proc_record  # 释放内存
+            record = {}
+            for _ in range(len(record_sync)):
+                r = record_sync.pop()
+                record.update(r)
+                del r
+            intersection = np.sum(
+                [meters["intersection"] for _, meters in record.items()], axis=0
+            )
+            union = np.sum([meters["union"] for _, meters in record.items()], axis=0)
+            target = np.sum([meters["target"] for _, meters in record.items()], axis=0)
 
-            # 计算全局总指标
-            total_inter = np.sum([v["intersection"] for v in all_record.values()], axis=0)
-            total_union = np.sum([v["union"] for v in all_record.values()], axis=0)
-            total_target = np.sum([v["target"] for v in all_record.values()], axis=0)
-
-            # S3DIS数据集额外保存指标文件（保持原逻辑）
             if self.cfg.data.test.type == "S3DISDataset":
                 torch.save(
-                    dict(intersection=total_inter, union=total_union, target=total_target),
+                    dict(intersection=intersection, union=union, target=target),
                     os.path.join(save_path, f"{self.test_loader.dataset.split}.pth"),
                 )
 
-            # 计算全局类别级/整体指标
-            global_iou_class = total_inter / (total_union + 1e-10)  # 每类平均IOU
-            global_acc_class = total_inter / (total_target + 1e-10)  # 每类平均ACC
-            global_miou = np.mean(global_iou_class)  # 全局mIoU
-            global_macc = np.mean(global_acc_class)  # 全局mAcc
-            global_oa = np.sum(total_inter) / (np.sum(total_target) + 1e-10)  # 全局OA（Overall Accuracy）
+            iou_class = intersection / (union + 1e-10)
+            accuracy_class = intersection / (target + 1e-10)
+            mIoU = np.mean(iou_class)
+            mAcc = np.mean(accuracy_class)
+            allAcc = sum(intersection) / (sum(target) + 1e-10)
 
-            # -------------------------- 写入CSV文件 --------------------------
-            csv_path = os.path.join(save_path, "test_results.csv")
-            num_classes = self.cfg.data.num_classes
-            class_names = self.cfg.data.names  # 类别名称（如["wall", "floor", "furniture"]）
-
-            # 1. 定义CSV表头
-            header = ["Scene_Name"]
-            # 添加每类IOU表头（如Class_0_IOU(wall), Class_1_IOU(floor)）
-            for i in range(num_classes):
-                header.append(f"Class_{i}_IOU({class_names[i]})")
-            # 添加每类ACC表头（如Class_0_ACC(wall), Class_1_ACC(floor)）
-            for i in range(num_classes):
-                header.append(f"Class_{i}_ACC({class_names[i]})")
-            # 添加场景级整体指标
-            header.extend(["Scene_mIoU", "Scene_OA"])
-
-            # 2. 写入CSV数据
-            with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(header)  # 写入表头
-
-                # 写入每个场景的指标
-                for scene_name, metrics in all_record.items():
-                    inter = metrics["intersection"]
-                    union = metrics["union"]
-                    target = metrics["target"]
-
-                    # 计算当前场景的类别级指标
-                    scene_iou = inter / (union + 1e-10)
-                    scene_acc = inter / (target + 1e-10)
-                    # 计算当前场景的mIoU（排除无标注的类别）
-                    valid_iou = scene_iou[union != 0]
-                    scene_miou = np.mean(valid_iou) if len(valid_iou) > 0 else 0.0
-                    # 计算当前场景的OA
-                    scene_oa = np.sum(inter) / (np.sum(target) + 1e-10)
-
-                    # 构建行数据（保留4位小数）
-                    row = [scene_name]
-                    row.extend([f"{x:.4f}" for x in scene_iou])  # 每类IOU
-                    row.extend([f"{x:.4f}" for x in scene_acc])  # 每类ACC
-                    row.extend([f"{scene_miou:.4f}", f"{scene_oa:.4f}"])  # 场景级整体指标
-                    writer.writerow(row)
-
-                # 写入全局平均指标行
-                avg_row = ["Global_Average"]
-                avg_row.extend([f"{x:.4f}" for x in global_iou_class])  # 每类平均IOU
-                avg_row.extend([f"{x:.4f}" for x in global_acc_class])  # 每类平均ACC
-                avg_row.extend([f"{global_miou:.4f}", f"{global_oa:.4f}"])  # 全局整体指标
-                writer.writerow(avg_row)
-
-            # -------------------------- 打印全局日志 --------------------------
-            logger.info(f"Test results saved to CSV: {csv_path}")
             logger.info(
-                "Final Val Result: mIoU/mAcc/OA {:.4f}/{:.4f}/{:.4f}".format(
-                    global_miou, global_macc, global_oa
+                "Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}".format(
+                    mIoU, mAcc, allAcc
                 )
             )
-            for i in range(num_classes):
+            for i in range(self.cfg.data.num_classes):
                 logger.info(
-                    f"Class_{i} ({class_names[i]}): IOU={global_iou_class[i]:.4f}, ACC={global_acc_class[i]:.4f}"
+                    "Class_{idx} - {name} Result: iou/accuracy {iou:.4f}/{accuracy:.4f}".format(
+                        idx=i,
+                        name=self.cfg.data.names[i],
+                        iou=iou_class[i],
+                        accuracy=accuracy_class[i],
+                    )
                 )
             logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
 
     @staticmethod
     def collate_fn(batch):
-        """修正原代码的语法错误，返回批次数据"""
         return batch
 
 @TESTERS.register_module()
